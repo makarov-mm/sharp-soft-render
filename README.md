@@ -1,6 +1,6 @@
 Software render on C# (WinForms, GDI+)
 
-Please, visit my personal page on https://russiancoders.dev/about/
+Please, visit my page on [https://www.linkedin.com/in/makarov-mm/](https://www.linkedin.com/in/makarov-mm/)
 
 ![Soft Renderer](Screenshots/screenshot1.png)
 
