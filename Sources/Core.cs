@@ -135,7 +135,7 @@ public sealed class Core
                         Matrix.CreateRotateY(30) *
                         Matrix.CreateTranslate(tmp.Width / 2.0, tmp.Height / 2.0, 0);
 
-                    vb = vb.Mult(matrix);
+                    vb = vb.Multiply(matrix);
                     vb.CalcTrianglesNormals();
                     vb.DrawTriangles(raw, Color.GhostWhite, true);
 
@@ -362,7 +362,7 @@ public sealed class Core
                     _rotationMatrix *
                     Matrix.CreateTranslate(bmp.Width / 2.0, bmp.Height / 2.0, 0);
 
-                VertexBuffer tmpVb = _vb.Clone().Mult(matrix);
+                VertexBuffer tmpVb = _vb.Clone().Multiply(matrix);
                 tmpVb.CalcTrianglesNormals();
                 tmpVb.DrawTriangles(raw, Color.GhostWhite, true);
 
@@ -374,7 +374,7 @@ public sealed class Core
                     Matrix.CreateTranslate(-100 * (_zoom / 10.0), 100 * (_zoom / 10.0), -1000) *
                     Matrix.CreateTranslate(bmp.Width / 2.0, bmp.Height / 2.0, 0);
 
-                tmpVb = _vb.Clone().Mult(matrix);
+                tmpVb = _vb.Clone().Multiply(matrix);
                 tmpVb.CalcTrianglesNormals();
                 tmpVb.DrawTriangles(raw, Color.Gray, false);
             }

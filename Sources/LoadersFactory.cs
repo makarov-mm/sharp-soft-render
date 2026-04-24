@@ -10,8 +10,8 @@ public sealed class LoadersFactory
     {
         string ext = (Path.GetExtension(fileName) ?? string.Empty).ToLowerInvariant();
 
-        if (_loaders.ContainsKey(ext))
-            return _loaders[ext];
+        if (_loaders.TryGetValue(ext, out ILoader loader))
+            return loader;
 
         Type loaderInterface = typeof (ILoader);
 

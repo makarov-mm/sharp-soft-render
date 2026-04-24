@@ -1,17 +1,10 @@
 ﻿namespace Renderer;
 
-public struct Vector
+public struct Vector(double x, double y, double z)
 {
-    public double X, Y, Z;
+    public double X = x, Y = y, Z = z;
 
-    public Vector(double x, double y, double z)
-    {
-        X = x;
-        Y = y;
-        Z = z;
-    }
-
-    public Vector Mult(Matrix matrix)
+    public Vector Multiply(Matrix matrix)
     {
         double x =
             X * matrix[0, 0] +
@@ -42,7 +35,7 @@ public struct Vector
 
     public static Vector operator *(Vector vec, Matrix matrix)
     {
-        return vec.Mult(matrix);
+        return vec.Multiply(matrix);
     }
 
     public Vector Normalize()

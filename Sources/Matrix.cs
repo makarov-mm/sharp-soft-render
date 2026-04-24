@@ -2,13 +2,8 @@
 
 public sealed class Matrix
 {
-    private readonly double[,] _arr;
+    private readonly double[,] _arr = new double[Size, Size];
     private const int Size = 4;
-
-    public Matrix()
-    {
-        _arr = new double[Size, Size];
-    }
 
     public static Matrix CreateIdentity()
     {
@@ -92,7 +87,7 @@ public sealed class Matrix
         return matrix;
     }
 
-    Matrix Mult(Matrix matrix)
+    private Matrix Multiply(Matrix matrix)
     {
         var result = new Matrix();
 
@@ -112,7 +107,7 @@ public sealed class Matrix
 
     public static Matrix operator *(Matrix mx0, Matrix mx1)
     {
-        return mx0.Mult(mx1);
+        return mx0.Multiply(mx1);
     }
 
     public double this[int i, int j]

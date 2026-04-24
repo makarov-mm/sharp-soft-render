@@ -1,22 +1,15 @@
 ﻿namespace Renderer;
 
-public sealed class Vertex
+public sealed class Vertex(Vector coords, Vector normal)
 {
-    public Vector Coords;
-    public Vector Normal;
+    public Vector Coords = coords;
+    public Vector Normal = normal;
 
-    public Vertex(Vector coords, Vector normal)
+    public Vertex(Vector coords) : this(coords, new Vector())
     {
-        Coords = coords;
-        Normal = normal;
     }
 
-    public Vertex(Vector coords)
-    {
-        Coords = coords;
-    }
-
-    public Vertex Mult(Matrix matrix)
+    public Vertex Multiply(Matrix matrix)
     {
         return new Vertex(
             Coords * matrix,
@@ -25,6 +18,6 @@ public sealed class Vertex
 
     public static Vertex operator* (Vertex vx, Matrix matrix)
     {
-        return vx.Mult(matrix);
+        return vx.Multiply(matrix);
     }
 }

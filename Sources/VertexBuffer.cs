@@ -19,7 +19,7 @@ public sealed class VertexBuffer
         _vertices.Add(vx);
     }
 
-    public VertexBuffer Mult(Matrix matrix)
+    public VertexBuffer Multiply(Matrix matrix)
     {
         var vb = new VertexBuffer(_vertices.Count);
 
@@ -40,7 +40,7 @@ public sealed class VertexBuffer
 
     public static VertexBuffer operator* (VertexBuffer vb, Matrix matrix)
     {
-        return vb.Mult(matrix);
+        return vb.Multiply(matrix);
     }
 
     public void DrawTriangles(IRenderTarget target, Color color, bool lighting)
