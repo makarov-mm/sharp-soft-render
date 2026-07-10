@@ -19,6 +19,12 @@ public sealed class Core
         Matrix.CreateRotateX(30) *
         Matrix.CreateRotateY(30);
 
+    /// <summary>
+    /// Directional light in screen space: from the upper left towards the
+    /// viewer (+Z is closer to the camera in this pipeline).
+    /// </summary>
+    private static readonly Vector LightDirection = new Vector(-0.35, -0.5, 0.85).Normalize();
+
     public static Core Instance => _core ??= new Core();
 
     public Form Window
@@ -115,7 +121,11 @@ public sealed class Core
                 };
 
                 int i = 0;
-                var files = Directory.GetFiles(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath) ?? string.Empty, "Objects"));
+                string[] files = Directory
+                    .GetFiles(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath) ?? string.Empty, "Objects"))
+                    .Where(f => Loaders.CanLoad(f))
+                    .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
 
                 foreach (string fileName in files)
                 {
@@ -136,8 +146,13 @@ public sealed class Core
                         Matrix.CreateTranslate(tmp.Width / 2.0, tmp.Height / 2.0, 0);
 
                     vb = vb.Multiply(matrix);
-                    vb.CalcTrianglesNormals();
-                    vb.DrawTriangles(raw, Color.GhostWhite, true);
+
+                    if (!vb.HasNormals)
+                    {
+                        vb.CalcTrianglesNormals();
+                    }
+
+                    vb.Draw(raw, Color.GhostWhite, vb.Texture, true, LightDirection);
 
                     imageList.Images.Add(tmp);
                     var item = new ListViewItem(Path.GetFileName(fileName), i++);
@@ -363,8 +378,13 @@ public sealed class Core
                     Matrix.CreateTranslate(bmp.Width / 2.0, bmp.Height / 2.0, 0);
 
                 VertexBuffer tmpVb = _vb.Clone().Multiply(matrix);
-                tmpVb.CalcTrianglesNormals();
-                tmpVb.DrawTriangles(raw, Color.GhostWhite, true);
+
+                if (!tmpVb.HasNormals)
+                {
+                    tmpVb.CalcTrianglesNormals();
+                }
+
+                tmpVb.Draw(raw, Color.GhostWhite, tmpVb.Texture, true, LightDirection);
 
                 matrix =
                     Matrix.CreateIdentity() *
@@ -375,7 +395,6 @@ public sealed class Core
                     Matrix.CreateTranslate(bmp.Width / 2.0, bmp.Height / 2.0, 0);
 
                 tmpVb = _vb.Clone().Multiply(matrix);
-                tmpVb.CalcTrianglesNormals();
                 tmpVb.DrawTriangles(raw, Color.Gray, false);
             }
         }
@@ -396,6 +415,7 @@ public sealed class Core
     [STAThread]
     public static void Main()
     {
+        TextureRegistry.LoadFromFile = TextureIO.FromFile;
         Instance.Run();
     }
 }

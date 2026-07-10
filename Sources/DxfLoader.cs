@@ -4,6 +4,8 @@ namespace Renderer;
 
 public sealed class DxfLoader: ILoader
 {
+    public IReadOnlyList<string> Extensions { get; } = new[] { ".dxf" };
+
     public VertexBuffer Load(string fileName)
     {
         var vb = new VertexBuffer();

@@ -4,23 +4,38 @@ namespace Renderer;
 
 public sealed class LoadersFactory
 {
-    private readonly Dictionary<string, ILoader> _loaders = new Dictionary<string, ILoader>();
+    private readonly Dictionary<string, ILoader> _loaders;
+
+    public LoadersFactory()
+    {
+        _loaders = new Dictionary<string, ILoader>(StringComparer.OrdinalIgnoreCase);
+
+        Type loaderInterface = typeof(ILoader);
+
+        IEnumerable<Type> loaderClasses = Assembly
+            .GetExecutingAssembly()
+            .GetTypes()
+            .Where(t => t.IsClass && !t.IsAbstract && loaderInterface.IsAssignableFrom(t));
+
+        foreach (Type loaderClass in loaderClasses)
+        {
+            var loader = (ILoader)Activator.CreateInstance(loaderClass);
+
+            foreach (string extension in loader!.Extensions)
+            {
+                _loaders[extension] = loader;
+            }
+        }
+    }
 
     public ILoader GetLoader(string fileName)
     {
-        string ext = (Path.GetExtension(fileName) ?? string.Empty).ToLowerInvariant();
+        string ext = Path.GetExtension(fileName) ?? string.Empty;
+        return _loaders.GetValueOrDefault(ext);
+    }
 
-        if (_loaders.TryGetValue(ext, out ILoader loader))
-            return loader;
-
-        Type loaderInterface = typeof (ILoader);
-
-        Type loaderClass = Assembly
-            .GetExecutingAssembly()
-            .GetTypes()
-            .Where(t => t.IsClass)
-            .FirstOrDefault(t => t.GetInterfaces().Any(i => i == loaderInterface));
-
-        return loaderClass == null ? null : _loaders[ext] = (ILoader)Activator.CreateInstance(loaderClass);
+    public bool CanLoad(string fileName)
+    {
+        return GetLoader(fileName) != null;
     }
 }
