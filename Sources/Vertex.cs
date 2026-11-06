@@ -1,29 +1,30 @@
-﻿namespace Renderer;
+using System.Numerics;
 
-public sealed class Vertex(Vector coords, Vector normal, double u, double v)
+namespace Renderer;
+
+/// <summary>A mesh vertex: position, unit normal and texture coordinates.</summary>
+public record struct Vertex(Vector3 Position, Vector3 Normal, Vector2 Uv)
 {
-    public Vector Coords = coords;
-    public Vector Normal = normal;
-    public double U = u, V = v;
-
-    public Vertex(Vector coords) : this(coords, new Vector(), 0, 0)
+    public Vertex(Vector3 position) : this(position, Vector3.Zero, Vector2.Zero)
     {
     }
 
-    public Vertex(Vector coords, Vector normal) : this(coords, normal, 0, 0)
-    {
-    }
+    /// <summary>
+    /// Transforms the position as a point and the normal as a direction
+    /// (translation ignored, renormalized afterwards).
+    /// </summary>
+    public readonly Vertex Transform(in Matrix4x4 matrix) => new(
+        Vector3.Transform(Position, matrix),
+        VectorMath.NormalizeOrZero(Vector3.TransformNormal(Normal, matrix)),
+        Uv);
+}
 
-    public Vertex Multiply(Matrix matrix)
+public static class VectorMath
+{
+    /// <summary>Unit vector in the same direction, or zero for a zero vector (no NaNs).</summary>
+    public static Vector3 NormalizeOrZero(Vector3 v)
     {
-        return new Vertex(
-            Coords * matrix,
-            Normal.MultiplyDirection(matrix).Normalize(),
-            U, V);
-    }
-
-    public static Vertex operator* (Vertex vx, Matrix matrix)
-    {
-        return vx.Multiply(matrix);
+        float lengthSquared = v.LengthSquared();
+        return lengthSquared > 0f ? v / MathF.Sqrt(lengthSquared) : Vector3.Zero;
     }
 }

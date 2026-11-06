@@ -1,139 +1,91 @@
-﻿using System.Globalization;
+using System.Globalization;
+using System.Numerics;
 
 namespace Renderer;
 
 /// <summary>
-/// Wavefront OBJ loader: v / vt / vn / f (with fan triangulation and negative
-/// indices) plus a minimal MTL parser that picks up the diffuse map (map_Kd).
-/// If the file has no normals, smooth vertex normals are computed.
+/// Wavefront OBJ loader: v / vt / vn / f (fan triangulation of n-gons, negative
+/// indices) plus the minimal MTL parsing needed to find the diffuse map
+/// (map_Kd). Files without normals get smooth vertex normals.
 /// </summary>
-public sealed class ObjLoader : ILoader
+public sealed class ObjLoader(Func<string, Texture?>? decodeTexture = null) : IModelLoader
 {
-    public IReadOnlyList<string> Extensions { get; } = new[] { ".obj" };
+    public IReadOnlyList<string> Extensions { get; } = [".obj"];
 
-    public VertexBuffer Load(string fileName)
+    public Mesh Load(string fileName)
     {
-        var vb = new VertexBuffer();
-
-        var positions = new List<Vector>();
-        var texCoords = new List<(double U, double V)>();
-        var normals = new List<Vector>();
-
-        bool fileHasNormals = false;
-        string texturePath = null;
+        var mesh = new Mesh();
+        var positions = new List<Vector3>();
+        var texCoords = new List<Vector2>();
+        var normals = new List<Vector3>();
         var materialTextures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
+        string? texturePath = null;
+        bool fileHasNormals = false;
         string baseDir = Path.GetDirectoryName(Path.GetFullPath(fileName)) ?? string.Empty;
 
         foreach (string rawLine in File.ReadLines(fileName))
         {
-            string line = StripComment(rawLine).Trim();
-
-            if (line.Length == 0)
-                continue;
-
-            string[] parts = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+            string[] parts = Tokenize(rawLine);
+            if (parts.Length == 0) continue;
 
             switch (parts[0].ToLowerInvariant())
             {
-                case "v":
-                    // Flip Y: OBJ is Y-up, screen space is Y-down.
-                    positions.Add(new Vector(
-                        ParseDouble(parts[1]),
-                        -ParseDouble(parts[2]),
-                        ParseDouble(parts[3])));
-                    break;
+            case "v":   // OBJ is Y-up, screen space is Y-down
+                positions.Add(new Vector3(Parse(parts[1]), -Parse(parts[2]), Parse(parts[3])));
+                break;
 
-                case "vt":
-                    texCoords.Add((
-                        ParseDouble(parts[1]),
-                        parts.Length > 2 ? ParseDouble(parts[2]) : 0));
-                    break;
+            case "vt":
+                texCoords.Add(new Vector2(Parse(parts[1]), parts.Length > 2 ? Parse(parts[2]) : 0f));
+                break;
 
-                case "vn":
-                    normals.Add(new Vector(
-                        ParseDouble(parts[1]),
-                        -ParseDouble(parts[2]),
-                        ParseDouble(parts[3])));
-                    break;
+            case "vn":
+                normals.Add(new Vector3(Parse(parts[1]), -Parse(parts[2]), Parse(parts[3])));
+                break;
 
-                case "f":
+            case "f":   // fan triangulation: (0, i, i + 1) for any polygon size
+                Vertex first = FaceVertex(parts[1], positions, texCoords, normals, ref fileHasNormals);
+                for (int i = 2; i + 1 < parts.Length; i++)
                 {
-                    // Fan triangulation: (0, i, i + 1) for any polygon size.
-                    for (int i = 2; i < parts.Length - 1; ++i)
-                    {
-                        AddFaceVertex(vb, parts[1], positions, texCoords, normals, ref fileHasNormals);
-                        AddFaceVertex(vb, parts[i], positions, texCoords, normals, ref fileHasNormals);
-                        AddFaceVertex(vb, parts[i + 1], positions, texCoords, normals, ref fileHasNormals);
-                    }
-
-                    break;
+                    mesh.AddTriangle(
+                        first,
+                        FaceVertex(parts[i], positions, texCoords, normals, ref fileHasNormals),
+                        FaceVertex(parts[i + 1], positions, texCoords, normals, ref fileHasNormals));
                 }
+                break;
 
-                case "mtllib":
-                    LoadMaterials(Path.Combine(baseDir, line.Substring(parts[0].Length).Trim()), materialTextures);
-                    break;
+            case "mtllib":
+                LoadMaterials(Path.Combine(baseDir, RestOfLine(rawLine, parts[0])), materialTextures);
+                break;
 
-                case "usemtl":
-                    if (texturePath == null &&
-                        materialTextures.TryGetValue(parts.Length > 1 ? parts[1] : string.Empty, out string mapKd))
-                    {
-                        texturePath = Path.IsPathRooted(mapKd) ? mapKd : Path.Combine(baseDir, mapKd);
-                    }
-
-                    break;
+            case "usemtl":  // the first material with a map wins; one texture per mesh
+                if (texturePath is null && parts.Length > 1 && materialTextures.TryGetValue(parts[1], out string? mapKd))
+                    texturePath = Path.IsPathRooted(mapKd) ? mapKd : Path.Combine(baseDir, mapKd);
+                break;
             }
         }
 
-        vb.CenterCoordsToZero();
-
-        if (fileHasNormals)
-        {
-            vb.HasNormals = true;
-        }
-        else
-        {
-            vb.CalcSmoothNormals();
-        }
-
-        if (texturePath != null && File.Exists(texturePath))
-        {
-            vb.Texture = TextureRegistry.LoadFromFile(texturePath);
-        }
-
-        return vb;
+        mesh.CenterOnOrigin();
+        if (!fileHasNormals) mesh.ComputeSmoothNormals();
+        if (texturePath is not null && decodeTexture is not null && File.Exists(texturePath))
+            mesh.Texture = decodeTexture(texturePath);
+        return mesh;
     }
 
-    private static void AddFaceVertex(
-        VertexBuffer vb,
-        string token,
-        List<Vector> positions,
-        List<(double U, double V)> texCoords,
-        List<Vector> normals,
-        ref bool fileHasNormals)
+    // Token forms: "v", "v/vt", "v//vn", "v/vt/vn". Indices are 1-based;
+    // negative values count back from the end of the respective list.
+    private static Vertex FaceVertex(string token, List<Vector3> positions, List<Vector2> texCoords, List<Vector3> normals,
+                                     ref bool fileHasNormals)
     {
-        // Token forms: "v", "v/vt", "v//vn", "v/vt/vn". Indices are 1-based;
-        // negative values count back from the end of the respective list.
         string[] refs = token.Split('/');
-
-        Vector position = positions[ResolveIndex(refs[0], positions.Count)];
-
-        double u = 0, v = 0;
-
-        if (refs.Length > 1 && refs[1].Length > 0)
-        {
-            (u, v) = texCoords[ResolveIndex(refs[1], texCoords.Count)];
-        }
-
-        var normal = new Vector();
-
+        Vector3 position = positions[ResolveIndex(refs[0], positions.Count)];
+        Vector2 uv = refs.Length > 1 && refs[1].Length > 0 ? texCoords[ResolveIndex(refs[1], texCoords.Count)] : Vector2.Zero;
+        Vector3 normal = Vector3.Zero;
         if (refs.Length > 2 && refs[2].Length > 0)
         {
             normal = normals[ResolveIndex(refs[2], normals.Count)];
             fileHasNormals = true;
         }
-
-        vb.Add(new Vertex(position, normal, u, v));
+        return new Vertex(position, normal, uv);
     }
 
     private static int ResolveIndex(string token, int count)
@@ -144,47 +96,41 @@ public sealed class ObjLoader : ILoader
 
     private static void LoadMaterials(string mtlPath, Dictionary<string, string> materialTextures)
     {
-        if (!File.Exists(mtlPath))
-            return;
+        if (!File.Exists(mtlPath)) return;
 
-        string currentMaterial = null;
-
+        string? material = null;
         foreach (string rawLine in File.ReadLines(mtlPath))
         {
-            string line = StripComment(rawLine).Trim();
-
-            if (line.Length == 0)
-                continue;
-
-            string[] parts = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+            string[] parts = Tokenize(rawLine);
+            if (parts.Length == 0) continue;
 
             switch (parts[0].ToLowerInvariant())
             {
-                case "newmtl":
-                    currentMaterial = parts.Length > 1 ? parts[1] : null;
-                    break;
+            case "newmtl":
+                material = parts.Length > 1 ? parts[1] : null;
+                break;
 
-                case "map_kd":
-                    if (currentMaterial != null)
-                    {
-                        // The texture file name may contain spaces; options (-o, -s, ...)
-                        // are not supported, take everything after the keyword.
-                        materialTextures[currentMaterial] = line.Substring(parts[0].Length).Trim();
-                    }
-
-                    break;
+            case "map_kd":  // the file name may contain spaces; map options (-o, -s, ...) are not supported
+                if (material is not null) materialTextures[material] = RestOfLine(rawLine, parts[0]);
+                break;
             }
         }
     }
 
-    private static string StripComment(string line)
+    // The line without its comment, split on whitespace.
+    private static string[] Tokenize(string line)
     {
         int hash = line.IndexOf('#');
-        return hash < 0 ? line : line.Substring(0, hash);
+        if (hash >= 0) line = line[..hash];
+        return line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
     }
 
-    private static double ParseDouble(string s)
+    private static string RestOfLine(string line, string keyword)
     {
-        return double.Parse(s, CultureInfo.InvariantCulture);
+        int hash = line.IndexOf('#');
+        if (hash >= 0) line = line[..hash];
+        return line.TrimStart()[keyword.Length..].Trim();
     }
+
+    private static float Parse(string s) => float.Parse(s, CultureInfo.InvariantCulture);
 }

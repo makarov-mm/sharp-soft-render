@@ -1,238 +1,143 @@
-﻿using System.Globalization;
+using System.Globalization;
+using System.Numerics;
 
 namespace Renderer;
 
-public sealed class DxfLoader: ILoader
+/// <summary>
+/// DXF loader for the two mesh-carrying entities of the ENTITIES section:
+/// MESH (AcDbSubDMesh: a vertex table plus an n-gon face list) and 3DFACE.
+/// DXF is Z-up; the mesh is brought into the renderer's Y-down screen space
+/// by swapping Y and Z. Faces are flat shaded.
+/// </summary>
+public sealed class DxfLoader : IModelLoader
 {
-    public IReadOnlyList<string> Extensions { get; } = new[] { ".dxf" };
+    public IReadOnlyList<string> Extensions { get; } = [".dxf"];
 
-    public VertexBuffer Load(string fileName)
+    // A DXF file is a flat list of (group code, value) pairs, one per two lines.
+    private readonly record struct Group(int Code, string Value);
+
+    public Mesh Load(string fileName)
     {
-        var vb = new VertexBuffer();
+        List<Group> groups = ReadGroups(fileName);
+        var mesh = new Mesh();
+        bool inEntities = false;
 
-        string[] lines = File.ReadAllLines(fileName);
-        var currentSection = Sections.None;
-        var entityType = Entities.None;
-
-        int primitiveType = 0;
-        int coordsCount = 0;
-        var coords = new List<float>();
-
-        var indexes = new List<int>();
-        var vertices = new List<Vector>();
-        int verticesCount = 0;
-
-        int indexesCount = 0;
-
-        float a10 = 0, a20 = 0, a30 = 0,
-            a11 = 0, a21 = 0, a31 = 0,
-            a12 = 0, a22 = 0, a32 = 0,
-            a13 = 0, a23 = 0, a33 = 0;
-
-        for (int i = 0; i < lines.Length - 1; i += 2)
+        for (int i = 0; i < groups.Count; i++)
         {
-            int code = int.Parse(lines[i]);
-            string value = lines[i + 1].ToLowerInvariant();
+            if (groups[i].Code != 0) continue;   // only entity / section markers matter here
 
-            if (currentSection == Sections.None)
+            switch (groups[i].Value.ToUpperInvariant())
             {
-                if (code == 0 && value == "section")
-                {
-                    int j = i + 2;
-                    code = int.Parse(lines[j]);
-                    value = lines[j + 1].ToLowerInvariant();
-
-                    if (code == 2)
-                    {
-                        switch (value)
-                        {
-                            case "header":
-                                currentSection = Sections.Header;
-                                break;
-
-                            case "tables":
-                                currentSection = Sections.Tables;
-                                break;
-
-                            case "blocks":
-                                currentSection = Sections.Blocks;
-                                break;
-
-                            case "entities":
-                                currentSection = Sections.Entities;
-                                break;
-                        }
-
-                        i += 2;
-                    }
-                }
-            }
-            else
-            {
-                if (code == 0 && value == "endsec")
-                    currentSection = Sections.None;
-                else
-                {
-                    if (currentSection == Sections.Entities)
-                    {
-                        if (code == 0)
-                        {
-                            switch (value)
-                            {
-                                case "line":
-                                    entityType = Entities.Line;
-                                    break;
-
-                                case "insert":
-                                    entityType = Entities.Insert;
-                                    break;
-
-                                case "mesh":
-                                    entityType = Entities.Mesh;
-                                    break;
-
-                                case "3dface":
-                                    entityType = Entities.Mesh;
-                                    break;
-                            }
-
-                            int j = i + 2;
-                            code = int.Parse(lines[j]);
-
-                            if (code == 5)
-                            {
-                                i += 2;
-                            }
-                        }
-                        else
-                        {
-                            if (entityType == Entities.Mesh)
-                            {
-                                if (code == 10 && verticesCount > 0)
-                                    coords.Add(float.Parse(value, CultureInfo.InvariantCulture));
-                                else if (code == 20 && verticesCount > 0)
-                                    coords.Add(float.Parse(value, CultureInfo.InvariantCulture));
-                                else if (code == 30 && verticesCount > 0)
-                                {
-                                    coords.Add(float.Parse(value, CultureInfo.InvariantCulture));
-                                    --verticesCount;
-                                    vertices.Add(new Vector(coords[0], coords[2], coords[1]));
-                                    coords.Clear();
-                                }
-                                else if (code == 92)
-                                    verticesCount = int.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 93)
-                                    indexesCount = int.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 90 && indexesCount > 0)
-                                {
-                                    if (coordsCount == 0)
-                                    {
-                                        coordsCount = int.Parse(value, CultureInfo.InvariantCulture);
-                                        --indexesCount;
-                                        primitiveType = coordsCount;
-                                    }
-                                    else
-                                    {
-                                        indexes.Add(int.Parse(value, CultureInfo.InvariantCulture));
-                                        --indexesCount;
-                                        --coordsCount;
-
-                                        if (coordsCount == 0)
-                                        {
-                                            if (primitiveType == 3)
-                                            {
-                                                vb.Add(new Vertex(vertices[indexes[0]]));
-                                                vb.Add(new Vertex(vertices[indexes[1]]));
-                                                vb.Add(new Vertex(vertices[indexes[2]]));
-                                            }
-                                            else if (primitiveType == 4)
-                                            {
-                                                vb.Add(new Vertex(vertices[indexes[0]]));
-                                                vb.Add(new Vertex(vertices[indexes[1]]));
-                                                vb.Add(new Vertex(vertices[indexes[2]]));
-
-                                                vb.Add(new Vertex(vertices[indexes[0]]));
-                                                vb.Add(new Vertex(vertices[indexes[2]]));
-                                                vb.Add(new Vertex(vertices[indexes[3]]));
-                                            }
-                                            else
-                                            {
-                                                //TODO: ?
-                                            }
-
-                                            indexes.Clear();
-                                        }
-                                    }
-                                }
-                            }
-                            else if (entityType == Entities.Face3D)
-                            {
-                                if (code == 10)
-                                    a10 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 20)
-                                    a20 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 30)
-                                {
-                                    a30 = float.Parse(value, CultureInfo.InvariantCulture);
-                                    vb.Add(new Vertex(new Vector(a10, a20, a30)));
-                                }
-                                else if (code == 11)
-                                    a11 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 21)
-                                    a21 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 31)
-                                {
-                                    a31 = float.Parse(value, CultureInfo.InvariantCulture);
-                                    vb.Add(new Vertex(new Vector(a11, a21, a31)));
-                                }
-                                else if (code == 12)
-                                    a12 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 22)
-                                    a22 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 32)
-                                {
-                                    a32 = float.Parse(value, CultureInfo.InvariantCulture);
-                                    vb.Add(new Vertex(new Vector(a12, a22, a32)));
-                                }
-                                else if (code == 13)
-                                    a13 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 23)
-                                    a23 = float.Parse(value, CultureInfo.InvariantCulture);
-                                else if (code == 33)
-                                {
-                                    a33 = float.Parse(value, CultureInfo.InvariantCulture);
-                                    vb.Add(new Vertex(new Vector(a12, a22, a32)));
-                                    vb.Add(new Vertex(new Vector(a13, a23, a33)));
-                                    vb.Add(new Vertex(new Vector(a10, a20, a30)));
-                                }
-                            }
-                        }
-                    }
-                }
+            case "SECTION":
+                inEntities = i + 1 < groups.Count && groups[i + 1].Code == 2 &&
+                             groups[i + 1].Value.Equals("ENTITIES", StringComparison.OrdinalIgnoreCase);
+                break;
+            case "ENDSEC":
+                inEntities = false;
+                break;
+            case "MESH" when inEntities:
+                ReadMesh(groups, i + 1, mesh);
+                break;
+            case "3DFACE" when inEntities:
+                ReadFace(groups, i + 1, mesh);
+                break;
             }
         }
 
-        vb.CenterCoordsToZero();
-        vb.SortByDistance();
-        vb.CalcTrianglesNormals();
-        return vb;
+        mesh.CenterOnOrigin();
+        mesh.ComputeFlatNormals();
+        return mesh;
     }
 
-    private enum Sections
+    private static List<Group> ReadGroups(string fileName)
     {
-        None,
-        Header,
-        Tables,
-        Blocks,
-        Entities
+        var groups = new List<Group>();
+        using var reader = new StreamReader(fileName);
+        while (reader.ReadLine() is { } codeLine && reader.ReadLine() is { } value)
+        {
+            if (!int.TryParse(codeLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out int code))
+                throw new InvalidDataException($"'{Path.GetFileName(fileName)}' is not a DXF file: bad group code '{codeLine}'.");
+            groups.Add(new Group(code, value.Trim()));
+        }
+        return groups;
     }
 
-    private enum Entities
+    // MESH: 92 = vertex count, then 10/20/30 per vertex; 93 = length of the
+    // face list, then that many 90 values: [corner count, indices...] per face.
+    // The 90 values after the list (edges, creases) are not faces.
+    private static void ReadMesh(List<Group> groups, int start, Mesh mesh)
     {
-        None,
-        Line,
-        Insert,
-        Mesh,
-        Face3D
+        var positions = new List<Vector3>();
+        var faceList = new List<int>();
+        int verticesLeft = 0, faceValuesLeft = 0;
+        float x = 0f, y = 0f;
+
+        for (int i = start; i < groups.Count && groups[i].Code != 0; i++)
+        {
+            (int code, string value) = groups[i];
+            switch (code)
+            {
+            case 92: verticesLeft = ParseInt(value); break;
+            case 93: faceValuesLeft = ParseInt(value); break;
+            case 10 when verticesLeft > 0: x = ParseFloat(value); break;
+            case 20 when verticesLeft > 0: y = ParseFloat(value); break;
+            case 30 when verticesLeft > 0:
+                positions.Add(ToScreen(x, y, ParseFloat(value)));
+                verticesLeft--;
+                break;
+            case 90 when faceValuesLeft > 0:
+                faceList.Add(ParseInt(value));
+                faceValuesLeft--;
+                break;
+            }
+        }
+
+        for (int k = 0; k < faceList.Count;)
+        {
+            int corners = faceList[k++];
+            if (corners < 3 || k + corners > faceList.Count) break;   // malformed list
+            if (faceList.Skip(k).Take(corners).Any(index => index < 0 || index >= positions.Count))
+            {
+                k += corners;
+                continue;
+            }
+            for (int t = 1; t + 1 < corners; t++)   // fan triangulation of the n-gon
+            {
+                mesh.AddTriangle(
+                    new Vertex(positions[faceList[k]]),
+                    new Vertex(positions[faceList[k + t]]),
+                    new Vertex(positions[faceList[k + t + 1]]));
+            }
+            k += corners;
+        }
     }
+
+    // 3DFACE: corners 10/20/30, 11/21/31, 12/22/32, 13/23/33; a triangle
+    // repeats the third corner as the fourth.
+    private static void ReadFace(List<Group> groups, int start, Mesh mesh)
+    {
+        Span<Vector3> corners = stackalloc Vector3[4];
+        for (int i = start; i < groups.Count && groups[i].Code != 0; i++)
+        {
+            (int code, string value) = groups[i];
+            int corner = code % 10;
+            if (corner > 3) continue;
+            switch (code - corner)
+            {
+            case 10: corners[corner].X = ParseFloat(value); break;
+            case 20: corners[corner].Y = ParseFloat(value); break;
+            case 30: corners[corner].Z = ParseFloat(value); break;
+            }
+        }
+
+        Vector3 p0 = ToScreen(corners[0]), p1 = ToScreen(corners[1]), p2 = ToScreen(corners[2]), p3 = ToScreen(corners[3]);
+        mesh.AddTriangle(new Vertex(p0), new Vertex(p1), new Vertex(p2));
+        if (p3 != p2) mesh.AddTriangle(new Vertex(p0), new Vertex(p2), new Vertex(p3));
+    }
+
+    private static Vector3 ToScreen(Vector3 dxf) => ToScreen(dxf.X, dxf.Y, dxf.Z);
+    private static Vector3 ToScreen(float x, float y, float z) => new(x, z, y);
+
+    private static int ParseInt(string s) => int.Parse(s, NumberStyles.Integer, CultureInfo.InvariantCulture);
+    private static float ParseFloat(string s) => float.Parse(s, NumberStyles.Float, CultureInfo.InvariantCulture);
 }
